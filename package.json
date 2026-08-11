@@ -12,7 +12,8 @@
   "build": "tsc",
   "start": "node dist/server.js",
   "typecheck": "tsc --noEmit",
-  "test": "vitest run"
+  "test": "vitest run",
+  "migrate": "node-pg-migrate up -m migrations"
   },
   "keywords": [],
   "author": "",
@@ -20,6 +21,7 @@
   "description": "",
   "dependencies": {
     "fastify": "^5.11.3",
+    "node-pg-migrate": "^9.0.0",
     "pg": "^8.23.0",
     "zod": "^4.4.3"
   },

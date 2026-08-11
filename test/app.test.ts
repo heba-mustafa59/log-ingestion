@@ -11,4 +11,17 @@ describe('application', () => {
 
     await app.close();
   });
+
+  it('returns 200 from GET /health', async () => {
+    const app = buildApp();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/health'
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    await app.close();
+  });
 });
