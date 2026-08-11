@@ -56,7 +56,10 @@ A requirement should only be marked complete when it has been:
 # 4. Log Ingestion
 
 ## `POST /logs`
-
+- [x] Endpoint exists at exactly `POST /logs`
+- [x] Request body contains a top-level `logs` array
+- [x] Endpoint always accepts a batch
+- [x] A batch containing one log is valid
 ### Request Structure
 
 - [ ] Endpoint exists at exactly `POST /logs`
@@ -66,41 +69,41 @@ A requirement should only be marked complete when it has been:
 
 ### Timestamp Validation
 
-- [ ] `timestamp` is required
-- [ ] `timestamp` must be a valid ISO 8601 timestamp
-- [ ] `timestamp` must not be more than five minutes in the future
+- [x] `timestamp` is required
+- [x] `timestamp` must be a valid ISO 8601 timestamp
+- [x] `timestamp` must not be more than five minutes in the future
 
 ### Level Validation
 
-- [ ] `level` is required
-- [ ] `level=debug` is accepted
-- [ ] `level=info` is accepted
-- [ ] `level=warn` is accepted
-- [ ] `level=error` is accepted
-- [ ] Unsupported levels are rejected
+- [x] `level` is required
+- [x] `level=debug` is accepted
+- [x] `level=info` is accepted
+- [x] `level=warn` is accepted
+- [x] `level=error` is accepted
+- [x] Unsupported levels are rejected
 
 ### Service Validation
 
-- [ ] `service` is required
-- [ ] `service` must be a string
-- [ ] `service` must not be empty
+- [x] `service` is required
+- [x] `service` must be a string
+- [x] `service` must not be empty
 
 ### Message Validation
 
-- [ ] `message` is required
-- [ ] `message` must be a string
-- [ ] `message` must not be empty
+- [x] `message` is required
+- [x] `message` must be a string
+- [x] `message` must not be empty
 
 ### Attributes Validation
 
-- [ ] `attributes` is optional
-- [ ] `attributes` must be an object when provided
-- [ ] Attributes must be flat
-- [ ] String attribute values are accepted
-- [ ] Number attribute values are accepted
-- [ ] Boolean attribute values are accepted
-- [ ] Nested objects are rejected
-- [ ] Arrays are rejected
+- [x] `attributes` is optional
+- [x] `attributes` must be an object when provided
+- [x] Attributes must be flat
+- [x] String attribute values are accepted
+- [x] Number attribute values are accepted
+- [x] Boolean attribute values are accepted
+- [x] Nested objects are rejected
+- [x] Arrays are rejected
 
 ### Batch Behavior
 
