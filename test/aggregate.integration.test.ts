@@ -9,9 +9,11 @@ import {
 import { buildApp } from '../src/app.js';
 import { pool } from '../src/database/pool.js';
 
-const TEST_SERVICE = 'aggregate-integration-suite';
+const TEST_SERVICE =
+  'aggregate-integration-suite';
 
 beforeAll(async () => {
+  // Clean leftovers
   await pool.query(
     'DELETE FROM logs WHERE service = $1',
     [TEST_SERVICE]
@@ -19,30 +21,82 @@ beforeAll(async () => {
 
   await pool.query(
     `
-      INSERT INTO logs (
-        timestamp,
-        level,
-        service,
-        message,
-        attributes
-      )
-      VALUES
-        ($1, 'info', $4, 'one', '{}'),
-        ($2, 'error', $4, 'two', '{}'),
-        ($3, 'error', $4, 'three', '{}')
+      DELETE FROM log_rollups_minute
+      WHERE service = $1
     `,
-    [
-      '2026-08-10T10:00:10Z',
-      '2026-08-10T10:00:30Z',
-      '2026-08-10T10:01:10Z',
-      TEST_SERVICE
-    ]
+    [TEST_SERVICE]
   );
+
+  // Important:
+  // Insert through POST /logs,
+  // not directly with SQL.
+  const app = buildApp();
+
+  const response = await app.inject({
+    method: 'POST',
+    url: '/logs',
+    payload: {
+      logs: [
+        {
+          timestamp:
+            '2026-08-10T10:00:10Z',
+          level: 'info',
+          service: TEST_SERVICE,
+          message: 'one'
+        },
+        {
+          timestamp:
+            '2026-08-10T10:00:30Z',
+          level: 'error',
+          service: TEST_SERVICE,
+          message: 'two'
+        },
+        {
+          timestamp:
+            '2026-08-10T10:01:10Z',
+          level: 'error',
+          service: TEST_SERVICE,
+          message: 'three'
+        }
+      ]
+    }
+  });
+
+  expect(response.statusCode).toBe(200);
+  expect(response.json().accepted).toBe(3);
+
+  // Temporary diagnostic:
+  // prove that POST /logs updated the rollup table.
+  const rollups = await pool.query(
+    `
+      SELECT
+        bucket_start,
+        service,
+        level,
+        count
+      FROM log_rollups_minute
+      WHERE service = $1
+      ORDER BY bucket_start, level
+    `,
+    [TEST_SERVICE]
+  );
+
+  expect(rollups.rows).toHaveLength(3);
+
+  await app.close();
 });
 
 afterAll(async () => {
   await pool.query(
     'DELETE FROM logs WHERE service = $1',
+    [TEST_SERVICE]
+  );
+
+  await pool.query(
+    `
+      DELETE FROM log_rollups_minute
+      WHERE service = $1
+    `,
     [TEST_SERVICE]
   );
 });

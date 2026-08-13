@@ -1,6 +1,14 @@
 import { pool } from '../database/pool.js';
-import { buildAggregateQuery } from './aggregate-query-builder.js';
-import type { AggregateQuery } from './aggregate-query.js';
+
+import {
+  buildAggregateQuery,
+  buildRollupAggregateQuery,
+  canUseRollup
+} from './aggregate-query-builder.js';
+
+import type {
+  AggregateQuery
+} from './aggregate-query.js';
 
 export type DatabaseAggregateRow = {
   bucket_start: Date;
@@ -11,12 +19,16 @@ export type DatabaseAggregateRow = {
 export async function fetchAggregation(
   query: AggregateQuery
 ): Promise<DatabaseAggregateRow[]> {
-  const builtQuery = buildAggregateQuery(query);
+  const builtQuery =
+    canUseRollup(query)
+      ? buildRollupAggregateQuery(query)
+      : buildAggregateQuery(query);
 
-  const result = await pool.query<DatabaseAggregateRow>(
-    builtQuery.text,
-    builtQuery.values
-  );
+  const result =
+    await pool.query<DatabaseAggregateRow>(
+      builtQuery.text,
+      builtQuery.values
+    );
 
   return result.rows;
 }

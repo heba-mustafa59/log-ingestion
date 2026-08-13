@@ -1,62 +1,91 @@
 import { pool } from '../database/pool.js';
 import type { LogEntry } from './schema.js';
 
-const INSERT_CHUNK_SIZE = 1000;
+const INSERT_LOGS_QUERY = `
+  WITH input AS (
+    SELECT *
+    FROM jsonb_to_recordset($1::jsonb)
+    AS record(
+      timestamp timestamptz,
+      level text,
+      service text,
+      message text,
+      attributes jsonb
+    )
+  ),
 
-export async function insertLogs(logs: LogEntry[]): Promise<void> {
+  inserted AS (
+    INSERT INTO logs (
+      timestamp,
+      level,
+      service,
+      message,
+      attributes
+    )
+    SELECT
+      timestamp,
+      level,
+      service,
+      message,
+      COALESCE(
+        attributes,
+        '{}'::jsonb
+      )
+    FROM input
+
+    RETURNING
+      timestamp,
+      service,
+      level
+  ),
+
+  updated_rollups AS (
+    INSERT INTO log_rollups_minute (
+      bucket_start,
+      service,
+      level,
+      count
+    )
+    SELECT
+      date_trunc(
+        'minute',
+        timestamp
+      ),
+      service,
+      level,
+      COUNT(*)
+    FROM inserted
+    GROUP BY
+      1,
+      2,
+      3
+
+    ON CONFLICT (
+      bucket_start,
+      service,
+      level
+    )
+    DO UPDATE
+    SET count =
+      log_rollups_minute.count
+      + EXCLUDED.count
+
+    RETURNING 1
+  )
+
+  SELECT COUNT(*)
+  FROM inserted
+`;
+
+export async function insertLogs(
+  logs: LogEntry[]
+): Promise<void> {
   if (logs.length === 0) {
     return;
   }
 
-  const client = await pool.connect();
-
-  try {
-    await client.query('BEGIN');
-
-    for (let start = 0; start < logs.length; start += INSERT_CHUNK_SIZE) {
-      const chunk = logs.slice(start, start + INSERT_CHUNK_SIZE);
-
-      const values: unknown[] = [];
-
-      const placeholders = chunk.map((log, index) => {
-        const offset = index * 5;
-
-        values.push(
-          log.timestamp,
-          log.level,
-          log.service,
-          log.message,
-          JSON.stringify(log.attributes)
-        );
-
-        return `(
-          $${offset + 1},
-          $${offset + 2},
-          $${offset + 3},
-          $${offset + 4},
-          $${offset + 5}::jsonb
-        )`;
-      });
-
-      const query = `
-        INSERT INTO logs (
-          timestamp,
-          level,
-          service,
-          message,
-          attributes
-        )
-        VALUES ${placeholders.join(',')}
-      `;
-
-      await client.query(query, values);
-    }
-
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
+  await pool.query(
+    INSERT_LOGS_QUERY,
+    [JSON.stringify(logs)]
+  );
 }
