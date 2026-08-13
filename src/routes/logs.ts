@@ -7,7 +7,8 @@ import type {
 import { ingestRequestSchema } from '../logs/request-schema.js';
 import { validateLogBatch } from '../logs/validation.js';
 import { insertLogs } from '../logs/repository.js';
-
+import { parseLogQuery } from '../logs/query-validation.js';
+import { queryLogs } from '../logs/query-service.js';
 export async function logRoutes(
   app: FastifyInstance
 ): Promise<void> {
@@ -42,4 +43,26 @@ export async function logRoutes(
       });
     }
   );
+  app.get('/logs', async (request, reply) => {
+  let query;
+
+  try {
+    query = parseLogQuery(
+      request.query as Record<string, unknown>
+    );
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : 'invalid query parameters';
+
+    return reply.code(400).send({
+      error: message
+    });
+  }
+
+  const result = await queryLogs(query);
+
+  return reply.code(200).send(result);
+});
 }
