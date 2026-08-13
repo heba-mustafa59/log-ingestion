@@ -7,7 +7,8 @@ import {
 } from 'k6/metrics';
 
 const BASE_URL =
-  __ENV.BASE_URL ?? 'http://localhost:8080';
+  __ENV.BASE_URL ??
+  'http://localhost:8080';
 
 const BATCH_SIZE =
   Number(__ENV.BATCH_SIZE ?? 1500);
@@ -16,7 +17,7 @@ const INGESTION_RATE =
   Number(__ENV.INGESTION_RATE ?? 12);
 
 const DURATION =
-  __ENV.DURATION ?? '5m';
+  __ENV.DURATION ?? '60s';
 
 const acceptedLogs =
   new Counter('accepted_logs');
@@ -34,7 +35,10 @@ const queryDuration =
   new Trend('query_duration', true);
 
 const aggregationDuration =
-  new Trend('aggregation_duration', true);
+  new Trend(
+    'aggregation_duration',
+    true
+  );
 
 export const options = {
   scenarios: {
@@ -58,52 +62,70 @@ export const options = {
       maxVUs: 20
     },
 
+    aggregation: {
+      executor: 'constant-arrival-rate',
+      exec: 'aggregateLogs',
+      rate: 1,
+      timeUnit: '1s',
+      duration: DURATION,
+      preAllocatedVUs: 3,
+      maxVUs: 20
+    }
   },
 
   thresholds: {
-    ingestion_errors: ['rate==0'],
-    query_errors: ['rate==0'],
-    aggregation_errors: ['rate==0'],
+    ingestion_errors: [
+      'rate==0'
+    ],
 
-   
+    query_errors: [
+      'rate==0'
+    ],
+
+    aggregation_errors: [
+      'rate==0'
+    ],
+
+    aggregation_duration: [
+      'p(95)<1000'
+    ]
   }
 };
 
-function makeBatch() {
+function createPayload() {
   const timestamp =
     new Date().toISOString();
 
-  const logs = [];
-
-  for (
-    let i = 0;
-    i < BATCH_SIZE;
-    i++
-  ) {
-    logs.push({
+  const logs = Array.from(
+    {
+      length: BATCH_SIZE
+    },
+    (_, index) => ({
       timestamp,
       level: 'info',
       service: 'load-test',
-      message: `load test message ${i}`,
+      message:
+        `load test message ${index}`,
       attributes: {
         source: 'k6',
-        position: i
+        position: index
       }
-    });
-  }
+    })
+  );
 
-  return logs;
+  return JSON.stringify({
+    logs
+  });
 }
 
 export function ingest() {
   const response = http.post(
     `${BASE_URL}/logs`,
-    JSON.stringify({
-      logs: makeBatch()
-    }),
+    createPayload(),
     {
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type':
+          'application/json'
       }
     }
   );
@@ -115,18 +137,22 @@ export function ingest() {
 
   ingestionErrors.add(!ok);
 
-  if (ok) {
-    const body = response.json();
-
-    acceptedLogs.add(
-      body.accepted ?? 0
-    );
+  if (!ok) {
+    return;
   }
+
+  const body = response.json();
+
+  acceptedLogs.add(
+    body.accepted ?? 0
+  );
 }
 
 export function queryLogs() {
   const response = http.get(
-    `${BASE_URL}/logs?service=load-test&limit=100`
+    `${BASE_URL}/logs` +
+    '?service=load-test' +
+    '&limit=100'
   );
 
   queryDuration.add(
@@ -156,12 +182,17 @@ export function aggregateLogs() {
 
   const url =
     `${BASE_URL}/logs/aggregate` +
-    `?since=${encodeURIComponent(since)}` +
-    `&until=${encodeURIComponent(until)}` +
+    `?since=${encodeURIComponent(
+      since
+    )}` +
+    `&until=${encodeURIComponent(
+      until
+    )}` +
     '&bucket=1m' +
     '&service=load-test';
 
-  const response = http.get(url);
+  const response =
+    http.get(url);
 
   aggregationDuration.add(
     response.timings.duration
