@@ -31,6 +31,57 @@ describe('POST /logs', () => {
 
     await app.close();
   });
+  
+  it('returns 400 for an invalid aggregation bucket', async () => {
+  const app = buildApp();
+
+  const response = await app.inject({
+    method: 'GET',
+    url:
+      '/logs/aggregate?' +
+      'since=2026-08-13T10:00:00Z' +
+      '&until=2026-08-13T11:00:00Z' +
+      '&bucket=10m'
+  });
+
+  expect(response.statusCode).toBe(400);
+
+  await app.close();
+});
+
+it('returns 400 for an invalid group_by', async () => {
+  const app = buildApp();
+
+  const response = await app.inject({
+    method: 'GET',
+    url:
+      '/logs/aggregate?' +
+      'since=2026-08-13T10:00:00Z' +
+      '&until=2026-08-13T11:00:00Z' +
+      '&bucket=1m' +
+      '&group_by=message'
+  });
+
+  expect(response.statusCode).toBe(400);
+
+  await app.close();
+});
+  it('returns 400 for malformed JSON', async () => {
+  const app = buildApp();
+
+  const response = await app.inject({
+    method: 'POST',
+    url: '/logs',
+    headers: {
+      'content-type': 'application/json'
+    },
+    payload: '{"logs": ['
+  });
+
+  expect(response.statusCode).toBe(400);
+
+  await app.close();
+});
 
   it('returns 400 when all entries are invalid', async () => {
     const app = buildApp();
