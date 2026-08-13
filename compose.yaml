@@ -14,13 +14,36 @@ services:
       - postgres_data:/var/lib/postgresql
 
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d log_ingestion"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U postgres -d log_ingestion"
+        ]
       interval: 5s
       timeout: 5s
       retries: 5
 
     cpus: 1.0
     mem_limit: 1g
+
+  app:
+    build:
+      context: .
+
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/log_ingestion
+      RETENTION_DAYS: "30"
+
+    ports:
+      - "8080:8080"
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+    cpus: 0.5
+    mem_limit: 256m
+
 
 volumes:
   postgres_data:
