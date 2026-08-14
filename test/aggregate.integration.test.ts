@@ -120,9 +120,8 @@ describe('GET /logs/aggregate', () => {
     expect(response.statusCode).toBe(200);
     expect(body.buckets).toHaveLength(2);
 
-    expect(body.buckets[0].count).toBe('2');
-    expect(body.buckets[1].count).toBe('1');
-
+   expect(body.buckets[0].count).toBe(2);
+   expect(body.buckets[1].count).toBe(1);
     await app.close();
   });
 

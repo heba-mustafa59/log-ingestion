@@ -1,18 +1,14 @@
-import {
-  fetchAggregation,
-  type DatabaseAggregateRow
-} from './aggregate-repository.js';
-
+import { fetchAggregation } from './aggregate-repository.js';
 import type { AggregateQuery } from './aggregate-query.js';
 
-export type AggregateBucketResponse = {
+export type AggregateBucketResult = {
   start: string;
   group: string | null;
-  count: string;
+  count: number;
 };
 
 export type AggregateResponse = {
-  buckets: AggregateBucketResponse[];
+  buckets: AggregateBucketResult[];
 };
 
 export async function aggregateLogs(
@@ -21,16 +17,10 @@ export async function aggregateLogs(
   const rows = await fetchAggregation(query);
 
   return {
-    buckets: rows.map(mapAggregateRow)
-  };
-}
-
-function mapAggregateRow(
-  row: DatabaseAggregateRow
-): AggregateBucketResponse {
-  return {
-    start: row.bucket_start.toISOString(),
-    group: row.group_value,
-    count: row.count
+    buckets: rows.map((row) => ({
+      start: row.bucket_start.toISOString(),
+      group: row.group_value,
+      count: Number(row.count)
+    }))
   };
 }
