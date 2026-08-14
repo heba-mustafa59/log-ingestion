@@ -39,7 +39,7 @@ const INSERT_LOGS_QUERY = `
       level
   ),
 
-  updated_rollups AS (
+  inserted_rollups AS (
     INSERT INTO log_rollups_minute (
       bucket_start,
       service,
@@ -59,16 +59,6 @@ const INSERT_LOGS_QUERY = `
       1,
       2,
       3
-
-    ON CONFLICT (
-      bucket_start,
-      service,
-      level
-    )
-    DO UPDATE
-    SET count =
-      log_rollups_minute.count
-      + EXCLUDED.count
 
     RETURNING 1
   )
