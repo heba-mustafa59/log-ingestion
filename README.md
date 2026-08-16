@@ -1,26 +1,32 @@
 # Log Ingestion and Query Service
 
-A high-performance log ingestion, querying, aggregation, and retention service built with TypeScript, Fastify, PostgreSQL, and Docker.
+A high-performance backend service for ingesting, storing, querying, aggregating, and automatically retaining structured application logs.
 
-The service is designed to sustain high-volume log ingestion while keeping recent logs queryable and supporting time-based aggregations under concurrent load.
+The service is built with Node.js, TypeScript, Fastify, PostgreSQL, and Docker.
 
-## Features
+The main performance requirement is to sustain at least **15,000 logs per second** while keeping log queries and aggregation responsive during ingestion.
 
-- Batch log ingestion with per-entry validation
+---
+
+# Features
+
+- Batch log ingestion
+- Independent per-log validation
 - Partial batch acceptance
-- PostgreSQL-backed durable storage
+- Durable PostgreSQL storage
 - Cursor-based pagination
 - Filtering by service, level, time range, attributes, and message text
 - Time-bucketed aggregation
 - Aggregation grouping by service or level
 - Minute-level aggregation rollups
+- Cross-request ingestion batching
 - Daily PostgreSQL partitioning
 - Automatic retention
 - Parameterized SQL
 - Zero-configuration Docker startup
-- Automated tests
+- Automated unit and integration tests
 - GitHub Actions CI
-- k6 performance testing
+- k6 load testing
 
 ---
 
@@ -35,27 +41,28 @@ The service is designed to sustain high-volume log ingestion while keeping recen
 - node-pg-migrate
 - Vitest
 - k6
-- Docker / Docker Compose
+- Docker
+- Docker Compose
 
 ---
 
 # Quick Start
 
-Only Docker and Docker Compose are required.
+The default setup requires only Docker and Docker Compose.
 
-Start the complete system:
+Start the complete system with:
 
 ```bash
-docker compose up --build
+docker compose up
 ```
 
-The API becomes available at:
+The API is exposed at:
 
 ```text
 http://localhost:8080
 ```
 
-Check readiness:
+Check service readiness:
 
 ```bash
 curl http://localhost:8080/health
@@ -71,7 +78,19 @@ Expected response:
 
 No `.env` file, command-line arguments, or manual database setup are required for the default configuration.
 
-The application connects to PostgreSQL, applies migrations and database maintenance, and only then starts accepting requests.
+During startup the application:
+
+```text
+connects to PostgreSQL
+        ↓
+runs database migrations
+        ↓
+performs partition maintenance
+        ↓
+starts listening for requests
+```
+
+The application only becomes available after its database dependencies and startup work are ready.
 
 ---
 
@@ -79,7 +98,7 @@ The application connects to PostgreSQL, applies migrations and database maintena
 
 ## `GET /health`
 
-Reports whether the application is ready.
+Reports whether the service is ready.
 
 ```bash
 curl http://localhost:8080/health
@@ -93,15 +112,13 @@ Response:
 }
 ```
 
-The service only reports healthy after its database dependency and startup work are ready.
-
 ---
 
 ## `POST /logs`
 
 Ingests a batch of logs.
 
-A batch containing one log is valid.
+A batch containing a single log is valid.
 
 Example:
 
@@ -111,7 +128,7 @@ curl -X POST http://localhost:8080/logs \
   -d '{
     "logs": [
       {
-        "timestamp": "2026-08-13T12:00:00Z",
+        "timestamp": "2026-08-14T10:00:00Z",
         "level": "info",
         "service": "checkout",
         "message": "payment processed",
@@ -134,9 +151,9 @@ Successful response:
 }
 ```
 
-Validation is performed independently for every entry.
+Each log is validated independently.
 
-A batch may therefore be partially accepted:
+A batch can therefore be partially accepted:
 
 ```json
 {
@@ -150,17 +167,19 @@ A batch may therefore be partially accepted:
 }
 ```
 
-The request returns `400` when:
+The request returns HTTP `400` when:
 
-- all entries are invalid
-- the JSON is malformed
-- the top-level request structure is invalid
+```text
+all entries are invalid
+the JSON is malformed
+the top-level request structure is invalid
+```
 
-## Log Validation
+### Log Validation
 
 | Field | Rules |
 |---|---|
-| `timestamp` | Required ISO 8601 timestamp, at most five minutes in the future |
+| `timestamp` | Required valid ISO 8601 timestamp; cannot be more than five minutes in the future |
 | `level` | `debug`, `info`, `warn`, or `error` |
 | `service` | Required non-empty string |
 | `message` | Required non-empty string |
@@ -178,7 +197,7 @@ Nested objects and arrays are rejected.
 
 ---
 
-## `GET /logs`
+# `GET /logs`
 
 Queries stored logs.
 
@@ -202,14 +221,14 @@ curl \
   "http://localhost:8080/logs?service=checkout&level=error&limit=100"
 ```
 
-Response:
+Example response:
 
 ```json
 {
   "logs": [
     {
       "id": "42",
-      "timestamp": "2026-08-13T12:00:00.000Z",
+      "timestamp": "2026-08-14T10:00:00.000Z",
       "level": "error",
       "service": "checkout",
       "message": "payment failed",
@@ -229,11 +248,21 @@ timestamp DESC
 id DESC
 ```
 
-The `id` acts as a deterministic tie-breaker for logs with the same timestamp.
+The `id` acts as a deterministic tie-breaker when multiple logs have the same timestamp.
 
-Pagination uses an opaque cursor and keyset pagination.
+Pagination uses opaque cursor-based keyset pagination.
 
-The default page size is `100` and the maximum is `1000`.
+The default page size is:
+
+```text
+100
+```
+
+The maximum page size is:
+
+```text
+1000
+```
 
 ### Query Semantics
 
@@ -243,14 +272,14 @@ level         exact match
 since         inclusive
 until         exclusive
 attr.<key>    string equality
-q             case-insensitive message substring
+q             case-insensitive substring search in message
 ```
 
 Invalid query parameters return HTTP `400`.
 
 ---
 
-## `GET /logs/aggregate`
+# `GET /logs/aggregate`
 
 Returns log counts grouped into time buckets.
 
@@ -291,7 +320,7 @@ Example:
 
 ```bash
 curl \
-  "http://localhost:8080/logs/aggregate?since=2026-08-13T10:00:00Z&until=2026-08-13T11:00:00Z&bucket=5m&service=checkout"
+  "http://localhost:8080/logs/aggregate?since=2026-08-14T10:00:00Z&until=2026-08-14T11:00:00Z&bucket=5m&service=checkout"
 ```
 
 Example response:
@@ -300,9 +329,9 @@ Example response:
 {
   "buckets": [
     {
-      "start": "2026-08-13T10:00:00.000Z",
+      "start": "2026-08-14T10:00:00.000Z",
       "group": null,
-      "count": "12500"
+      "count": 12500
     }
   ]
 }
@@ -310,9 +339,15 @@ Example response:
 
 Buckets are ordered by `start` ascending.
 
-`since` is inclusive and `until` is exclusive.
+`since` is inclusive.
 
-When `group_by` is not supplied, `group` is `null`.
+`until` is exclusive.
+
+When `group_by` is not provided:
+
+```json
+"group": null
+```
 
 Empty buckets may be omitted.
 
@@ -321,46 +356,49 @@ Empty buckets may be omitted.
 # Architecture
 
 ```text
-                         HTTP Clients
-                              │
-                              ▼
-                          Fastify
-                              │
-          ┌───────────────────┼────────────────────┐
-          ▼                   ▼                    ▼
-      POST /logs          GET /logs       GET /logs/aggregate
-          │                   │                    │
-          ▼                   ▼                    ▼
-      Validation          Query Builder      Aggregate Builder
-          │                   │                    │
-          ▼                   │             ┌──────┴──────┐
-   Ingestion Repository       │             ▼             ▼
-          │                   │          Rollups        Raw Logs
-          └───────────────────┴──────────────┬─────────────┘
-                                             ▼
-                                           pg.Pool
-                                             │
-                                             ▼
-                                         PostgreSQL
+                           HTTP Clients
+                                │
+                                ▼
+                            Fastify
+                                │
+           ┌────────────────────┼─────────────────────┐
+           │                    │                     │
+           ▼                    ▼                     ▼
+       POST /logs           GET /logs        GET /logs/aggregate
+           │                    │                     │
+           ▼                    ▼                     ▼
+       Validation          Query Builder        Aggregate Builder
+           │                    │                     │
+           ▼                    │              ┌──────┴──────┐
+ Cross-request Batcher          │              │             │
+           │                    │              ▼             ▼
+           ▼                    │          Rollup Path    Raw Path
+    Ingestion Repository        │              │             │
+           └────────────────────┴──────────────┴──────┬──────┘
+                                                      ▼
+                                                   pg.Pool
+                                                      │
+                                                      ▼
+                                                 PostgreSQL
 ```
 
-The code is separated into:
+The application separates HTTP handling from validation, batching, query construction, and persistence.
+
+The main layers are:
 
 ```text
 Routes
   ↓
 Validation / Services
   ↓
-Query Builders / Repositories
+Batching / Query Builders / Repositories
   ↓
 pg.Pool
   ↓
 PostgreSQL
 ```
 
-HTTP handlers remain focused on HTTP concerns while query construction and persistence are handled separately.
-
-Raw PostgreSQL logs remain the source of truth.
+PostgreSQL remains the source of truth for raw logs.
 
 ---
 
@@ -379,7 +417,7 @@ attributes  JSONB
 
 The design uses a hybrid relational + JSONB model.
 
-Frequently used fields have dedicated relational columns:
+Common fields have dedicated relational columns:
 
 ```text
 timestamp
@@ -394,13 +432,13 @@ Dynamic application-specific metadata is stored in:
 attributes JSONB
 ```
 
-This keeps each log represented by a single row while still supporting arbitrary flat attributes.
+This keeps each log represented by one row while supporting arbitrary flat attributes.
 
 ---
 
 # Attribute Storage Strategy
 
-Example attributes:
+Example:
 
 ```json
 {
@@ -415,122 +453,120 @@ Advantages:
 ```text
 flexible schema
 simple ingestion
-one row per log
+one database row per log
 native PostgreSQL JSONB support
 ```
 
 Trade-off:
 
 ```text
-arbitrary attribute filtering is more expensive than filtering
-dedicated relational columns
+arbitrary dynamic-attribute queries are more expensive
+than queries against dedicated relational columns
 ```
 
-For this reason, attributes are used for flexibility rather than as the primary physical organization of the table.
+Attributes are therefore used for flexibility rather than as the main physical organization of the log table.
 
 ---
 
 # Index Design
 
-The main raw-log query pattern is:
+The main raw-log access pattern is:
 
 ```text
 ORDER BY timestamp DESC, id DESC
 ```
 
-The primary query index therefore follows the same ordering:
+The main query index follows the same ordering:
 
 ```sql
 (timestamp DESC, id DESC)
 ```
 
-This index supports:
+This supports:
 
-- recent-log retrieval
-- deterministic ordering
-- cursor-based pagination
-- timestamp range queries
+```text
+recent-log retrieval
+timestamp range queries
+cursor pagination
+deterministic ordering
+```
 
-The `id` column acts as a tie-breaker when several logs have identical timestamps.
+Because raw logs are partitioned by timestamp, PostgreSQL can also apply partition pruning to bounded time-range queries.
 
-Because the raw log table is partitioned by `timestamp`, PostgreSQL can also use partition pruning for bounded time-range queries.
-
-The aggregation rollup table uses a primary key based on:
+The rollup table uses a lookup index on:
 
 ```text
 (bucket_start, service, level)
 ```
 
-This matches the rollup access pattern:
+This matches its primary query pattern:
 
 ```text
 time range
 +
-optional service
+optional service filter
 +
-optional level
+optional level filter
 ```
 
-No large collection of speculative indexes is created because every extra index increases ingestion write cost.
-
-The index strategy therefore prioritizes the required query patterns while keeping the ingestion hot path inexpensive.
+The project intentionally avoids creating unnecessary indexes because every additional index increases ingestion write cost.
 
 ---
 
 # Cursor Pagination
 
-`GET /logs` uses keyset pagination rather than `OFFSET`.
+`GET /logs` uses keyset pagination instead of `OFFSET`.
 
-Ordering:
+Ordering is based on:
 
 ```text
 timestamp DESC
 id DESC
 ```
 
-Conceptually, the next page continues after the final:
+The next page continues after the final:
 
 ```text
 (timestamp, id)
 ```
 
-pair from the previous page.
+pair returned by the previous page.
 
-Advantages over large offsets:
+Advantages:
 
 ```text
-stable pagination
 predictable query cost
+stable pagination
 no need to repeatedly skip large numbers of rows
 ```
 
-The cursor exposed to clients is opaque.
+The cursor exposed to API clients is opaque.
 
 ---
 
 # Partitioning
 
-Raw logs are stored in daily PostgreSQL range partitions using `timestamp`.
+Raw logs are stored using daily PostgreSQL range partitions based on `timestamp`.
 
 Conceptually:
 
 ```text
 logs
-├── logs_20260812
 ├── logs_20260813
 ├── logs_20260814
+├── logs_20260815
 └── ...
 ```
 
-Partitioning was chosen because the workload is naturally time-oriented.
+Daily partitioning was chosen because both querying and retention are naturally time-oriented.
 
-Advantages:
+Advantages include:
 
 ```text
-partition pruning for time-range queries
+partition pruning
 efficient retention
 reduced DELETE overhead
-less table bloat
+lower table bloat
 ```
 
 ---
@@ -546,60 +582,134 @@ RETENTION_DAYS
 The default value is:
 
 ```text
-30 days
+30
 ```
 
-Old daily partitions can be removed instead of deleting millions of expired rows individually.
+Expired daily partitions can be dropped instead of deleting millions of individual rows.
 
-This avoids the table bloat and vacuum pressure associated with large continuous `DELETE` operations.
+This reduces:
 
-Partition maintenance also prepares future daily partitions automatically.
+```text
+long-running DELETE operations
+table bloat
+VACUUM pressure
+retention-related ingestion disruption
+```
+
+Partition maintenance also prepares future partitions automatically.
 
 ---
 
 # Ingestion Design
 
-Each HTTP request contains a batch of logs.
+The original ingestion implementation wrote each HTTP request directly to PostgreSQL.
 
-The ingestion path is:
+That performs well when HTTP requests contain large batches, but the official load generator sends many small requests at a very high request rate.
+
+A representative official-style workload is approximately:
 
 ```text
-HTTP batch
-    ↓
-per-entry validation
-    ↓
-valid / rejected split
-    ↓
-JSON serialization
-    ↓
-jsonb_to_recordset()
-    ↓
-raw log INSERT
-    ↓
-minute rollup update
-    ↓
-PostgreSQL commit
-    ↓
-HTTP response
+33 logs/request
+×
+455 requests/sec
+≈
+15,015 logs/sec
 ```
 
-Valid logs are passed to PostgreSQL as a JSON parameter and expanded with:
+Sending every small HTTP request to PostgreSQL independently creates hundreds of database writes per second.
+
+To reduce that overhead, the final design uses a bounded cross-request ingestion batcher.
+
+```text
+HTTP request A ─┐
+HTTP request B ─┤
+HTTP request C ─┼─→ Cross-request batcher
+HTTP request D ─┤          │
+       ...      ─┘          ▼
+                       ~1000 logs
+                            │
+                            ▼
+                      PostgreSQL write
+```
+
+The current tuning uses:
+
+```text
+Target database batch size:      1000 logs
+Concurrent database batches:     2
+Short tail delay for batching
+Bounded outstanding queue
+```
+
+This allows hundreds of small HTTP requests to be coalesced into far fewer PostgreSQL writes.
+
+---
+
+# Ingestion Durability
+
+Cross-request batching does not change durability semantics.
+
+An HTTP request waits for the database batch containing its logs to complete.
+
+```text
+HTTP request
+     ↓
+validation
+     ↓
+batch queue
+     ↓
+combined PostgreSQL write
+     ↓
+database success
+     ↓
+request Promise resolves
+     ↓
+HTTP 200
+```
+
+The service does not return `200` before PostgreSQL successfully accepts the corresponding logs.
+
+If a database write fails, requests belonging to that write are not falsely acknowledged as successful.
+
+The batcher also bounds outstanding work so an overloaded database cannot create an unlimited in-memory queue.
+
+---
+
+# PostgreSQL Write Strategy
+
+Valid logs from multiple HTTP requests are combined and serialized as JSON.
+
+PostgreSQL expands the JSON using:
 
 ```sql
 jsonb_to_recordset(...)
 ```
 
-This replaced a large dynamically generated multi-row `VALUES` statement.
+This avoids generating thousands of individual SQL parameters.
 
-The approach greatly reduces the number of PostgreSQL parameters required for large batches.
+The general write path is:
 
-The HTTP success response is sent only after PostgreSQL successfully completes the write.
+```text
+validated logs
+      ↓
+JSON parameter
+      ↓
+jsonb_to_recordset()
+      ↓
+INSERT raw logs
+      ↓
+append rollup deltas
+      ↓
+statement completes
+```
+
+This significantly reduces PostgreSQL protocol and query-construction overhead for large combined batches.
 
 ---
 
 # Validation Strategy
 
-Validation runs on every incoming log, making it part of the ingestion hot path.
+Validation runs on every incoming log and is therefore part of the ingestion hot path.
 
 The implementation uses:
 
@@ -609,25 +719,27 @@ lightweight field validation
 strict ISO timestamp validation
 ```
 
-This preserves the required contract while reducing CPU overhead compared with performing a complete object-schema parse for every log at high ingestion rates.
+This preserves the API contract while reducing CPU overhead compared with performing a complete object-schema parse for every log at very high throughput.
 
-Each log is validated independently, allowing partial batch acceptance.
+Each entry is still validated independently, allowing partial batch acceptance.
 
 ---
 
 # Aggregation Design
 
-Initially, aggregation queries operated directly on raw logs.
+The initial aggregation implementation operated directly on raw logs.
 
-At approximately one million rows, `EXPLAIN ANALYZE` showed that the expensive part of the query was scanning and aggregating large numbers of raw rows.
+At approximately one million rows, raw aggregation became the main performance bottleneck.
 
-To remove that bottleneck, the service maintains:
+An `EXPLAIN ANALYZE` showed that most of the query cost came from scanning hundreds of thousands of raw rows.
+
+To avoid repeatedly scanning the full raw dataset, the service maintains a minute-level rollup table:
 
 ```text
 log_rollups_minute
 ```
 
-The rollup stores:
+Each rollup delta contains:
 
 ```text
 bucket_start
@@ -636,17 +748,51 @@ level
 count
 ```
 
-Counts are maintained by minute, service, and level.
+---
 
-During ingestion, raw logs and their minute rollups are updated as part of the same database statement.
+# Append-Only Rollups
+
+The first rollup implementation used one row for each:
+
+```text
+(bucket_start, service, level)
+```
+
+and updated that row using:
+
+```sql
+ON CONFLICT DO UPDATE
+```
+
+Under concurrent ingestion, multiple database writers can attempt to update the same current-minute rollup row.
+
+The final implementation instead stores append-only rollup deltas.
+
+Example:
+
+```text
+10:00 checkout info 450
+10:00 checkout info 520
+10:00 checkout info 480
+```
+
+Aggregation combines these rows using:
+
+```sql
+SUM(count)
+```
+
+This avoids requiring every concurrent ingestion batch to update the same rollup row.
+
+The rollup table therefore contains derived data, while the raw `logs` table remains the source of truth.
 
 ---
 
 # Rollup Query Strategy
 
-An aggregation that only depends on dimensions represented in the rollup can use the optimized path.
+Aggregations that only depend on dimensions represented in the rollup can use the optimized rollup path.
 
-Supported rollup dimensions include:
+Supported dimensions include:
 
 ```text
 time
@@ -663,18 +809,20 @@ attr.<key>
 
 fall back to raw logs because arbitrary message contents and dynamic attributes cannot be pre-aggregated generically.
 
-## Exact Time Boundaries
+---
+
+# Exact Aggregation Boundaries
 
 Rollups represent complete minutes.
 
-For a query such as:
+For example:
 
 ```text
 since = 10:00:37
 until = 11:00:22
 ```
 
-the service uses:
+the query can use:
 
 ```text
 raw logs     10:00:37 → 10:01:00
@@ -684,20 +832,20 @@ rollups      10:01:00 → 11:00:00
 raw logs     11:00:00 → 11:00:22
 ```
 
-This provides fast aggregation while preserving:
+This preserves the required semantics:
 
 ```text
 since inclusive
 until exclusive
 ```
 
-semantics exactly.
+while still using rollups for the majority of the range.
 
 ---
 
 # SQL Injection Protection
 
-All user-controlled values are passed using PostgreSQL parameters.
+All user-controlled values are passed through PostgreSQL parameters.
 
 Conceptually:
 
@@ -707,9 +855,9 @@ $2
 $3
 ```
 
-User values are never directly interpolated into SQL text.
+User values are not directly interpolated into SQL text.
 
-Dynamic choices such as:
+Dynamic options such as:
 
 ```text
 group_by=service
@@ -718,13 +866,13 @@ group_by=level
 
 are mapped only to predefined application-controlled SQL expressions.
 
-Attribute filters and text-search values are parameterized as well.
+Attribute filters and message-search values are parameterized as well.
 
 ---
 
 # Resource Limits
 
-The Docker environment uses the project resource limits.
+The Docker environment applies the required resource limits.
 
 Application:
 
@@ -740,7 +888,11 @@ CPU: 1
 RAM: 1 GB
 ```
 
-These limits are defined in `compose.yaml`.
+The limits are defined in:
+
+```text
+compose.yaml
+```
 
 ---
 
@@ -748,7 +900,7 @@ These limits are defined in `compose.yaml`.
 
 The project uses Vitest for automated testing.
 
-Coverage includes:
+The test suite covers areas including:
 
 ```text
 log validation
@@ -759,19 +911,22 @@ query filters
 cursor pagination
 invalid cursors
 aggregation validation
-aggregation query construction
-rollup aggregation
+aggregation queries
+numeric aggregation counts
+rollup behavior
 database integration
-SQL literal/injection cases
+cross-request batching
+batch durability
+SQL injection cases
 ```
 
-Run:
+Run all tests:
 
 ```bash
 npm test
 ```
 
-Type-check:
+Run TypeScript validation:
 
 ```bash
 npm run typecheck
@@ -787,7 +942,7 @@ npm run build
 
 # Continuous Integration
 
-GitHub Actions is used for CI.
+GitHub Actions runs automated validation for repository changes.
 
 The pipeline performs:
 
@@ -802,219 +957,202 @@ typecheck
     ↓
 build
     ↓
-database migrations
+PostgreSQL migrations
     ↓
-tests
+automated tests
 ```
 
-The CI environment uses PostgreSQL for database-backed tests.
+The final CI workflow was verified successfully before the latest official benchmark submission.
 
 ---
 
-# Performance Testing
+# Performance Requirements
 
-Performance testing is performed with k6 against the Dockerized application under the configured resource limits.
-
-The main goals were:
+The main required performance targets include:
 
 ```text
->= 15,000 logs/sec
-no dropped accepted logs
-queries remain responsive during ingestion
+>= 15,000 logs/sec sustained ingestion
+no silent log loss
+no application crashes
+queries remain usable during ingestion
 1 aggregation request/sec during ingestion
 aggregation p95 < 1 second
 ```
 
 ---
 
-# Performance Optimization Process
+# Performance Investigation
 
-The initial implementation exposed several measurable bottlenecks.
+Performance work was driven by measurements rather than assumptions.
 
-The optimization path was:
+Major bottlenecks discovered during development included:
 
 ```text
-Initial implementation
+production HTTP logging overhead
         ↓
-Disable request logging in production
+large PostgreSQL parameter lists
         ↓
-Replace large VALUES parameter lists
-with jsonb_to_recordset()
+per-log validation overhead
         ↓
-Reduce validation hot-path overhead
+raw aggregation scans
         ↓
-Tune ingestion batch sizes
-        ↓
-Measure concurrent queries
-        ↓
-Identify raw aggregation scan bottleneck
-        ↓
-Introduce minute rollups
+small-batch/high-request-rate database overhead
 ```
 
-Optimizations were introduced only after load tests identified an actual bottleneck.
+The main optimizations were:
+
+```text
+disable production request logging
+        ↓
+use jsonb_to_recordset()
+        ↓
+optimize validation hot path
+        ↓
+introduce minute rollups
+        ↓
+introduce cross-request ingestion batching
+        ↓
+tune combined DB batches for official-style traffic
+```
 
 ---
 
-# Local Performance Results
+# Official-Style Local Benchmark
 
-## Final Concurrent Workload
+The final local benchmark was configured to closely reproduce the shape of the official load-generator workload.
 
-The final local concurrent test ran for:
-
-```text
-60 seconds
-```
-
-with:
+Configuration:
 
 ```text
-18,000 logs/sec target ingestion
-2 GET /logs requests/sec
-1 GET /logs/aggregate request/sec
+Duration:                 120 seconds
+
+HTTP batch size:          33 logs/request
+Ingestion request rate:   455 requests/sec
+
+Target ingestion rate:    15,015 logs/sec
+
+GET /logs rate:           2 requests/sec
+Aggregation rate:         1 request/sec
 ```
 
-Results:
+Final results:
 
 | Metric | Result |
 |---|---:|
-| Accepted logs | 1,081,500 |
-| Measured ingestion rate | ~18,008 logs/sec |
+| Accepted logs | 1,801,800 |
+| Scheduled ingestion rate | 15,015 logs/sec |
+| Dropped iterations | 0 |
 | Ingestion errors | 0% |
 | Query errors | 0% |
 | Aggregation errors | 0% |
 | HTTP failures | 0% |
-| `GET /logs` p95 | ~13.56 ms |
-| Aggregation p95 | ~12.41 ms |
+| Ingestion p95 | ~133.35 ms |
+| `GET /logs` p95 | ~82.87 ms |
+| Aggregation p95 | ~82.14 ms |
 
-The required aggregation target is:
+Every scheduled ingestion request completed successfully during the two-minute test.
 
-```text
-p95 < 1 second
-```
-
-The measured local result was approximately:
+The complete scheduled log count was:
 
 ```text
-12.41 ms p95
+15,015 logs/sec
+×
+120 seconds
+=
+1,801,800 logs
 ```
 
-while ingestion and querying were active.
-
----
-
-# Ingestion-Only Experiments
-
-Higher ingestion rates were also tested to find the local saturation point.
-
-The service successfully completed an ingestion-only test at a scheduled input rate of:
-
-```text
-27,000 logs/sec
-```
-
-without HTTP errors or dropped iterations, although latency increased as the system approached saturation.
-
-A test targeting:
-
-```text
-30,000 logs/sec
-```
-
-accepted the scheduled logs but accumulated substantial latency and backlog.
-
-For that reason, `30,000 logs/sec` is not reported as sustained throughput.
-
-The primary performance result is the more representative concurrent workload:
-
-```text
-~18,000 logs/sec
-+
-2 queries/sec
-+
-1 aggregation/sec
-```
-
----
-
-# Dataset
-
-The final concurrent test inserted:
-
-```text
-1,081,500 logs
-```
-
-during its 60-second run.
-
-Additional tests were also performed around the million-row dataset size to investigate query and aggregation behavior.
-
-Performance results depend on the host machine and Docker environment.
+All `1,801,800` logs were accepted.
 
 ---
 
 # Aggregation Optimization Result
 
-Before rollups, concurrent raw aggregation became the main bottleneck.
+Before rollups, aggregation became the main bottleneck during concurrent ingestion.
 
-During a heavy concurrent test, aggregation p95 reached approximately:
+A previous concurrent test produced aggregation p95 latency of approximately:
 
 ```text
 37 seconds
 ```
 
-An `EXPLAIN ANALYZE` of the raw aggregation showed that most of the cost came from scanning hundreds of thousands of raw rows.
+Profiling showed that raw aggregation was scanning hundreds of thousands of raw rows.
 
-After introducing minute rollups, a representative rollup aggregation plan completed in approximately:
-
-```text
-0.475 ms execution time
-```
-
-The final full concurrent HTTP benchmark measured:
+After introducing minute-level aggregation rollups, a representative PostgreSQL rollup query executed in approximately:
 
 ```text
-~12.41 ms aggregation p95
+0.475 ms
 ```
 
-This includes the complete API request path rather than only PostgreSQL execution.
+The final complete HTTP benchmark measured:
+
+```text
+Aggregation p95 ≈ 82.14 ms
+```
+
+while approximately `15,000 logs/sec` were being ingested concurrently.
 
 ---
 
-# Load Testing
+# Official Load Generator
 
-Ingestion benchmark:
+An initial official benchmark exposed an important difference between the original local benchmark and the official workload.
+
+The original local test used relatively large HTTP batches.
+
+The official grader instead generated a much higher HTTP request rate using small batches.
+
+That caused PostgreSQL to receive too many small writes.
+
+This finding motivated the cross-request ingestion batcher used in the final implementation.
+
+A new official benchmark has been submitted using the optimized implementation.
+
+```text
+Status: Pending
+```
+
+The final official benchmark result will be added when the current submission completes.
+
+---
+
+# Local Load Testing
+
+The project includes k6 scenarios for ingestion and official-style concurrent testing.
+
+Example ingestion test:
 
 ```bash
-BATCH_SIZE=1500 \
-RATE=12 \
-DURATION=30s \
+BATCH_SIZE=33 \
+RATE=455 \
+DURATION=10s \
 k6 run load-tests/ingestion.js
 ```
 
-Concurrent system benchmark:
+Official-style concurrent test:
 
 ```bash
-BATCH_SIZE=1500 \
-INGESTION_RATE=12 \
-DURATION=60s \
-k6 run load-tests/system.js
+BATCH_SIZE=33 \
+REQUEST_RATE=455 \
+DURATION=120s \
+k6 run load-tests/LG-same.js
 ```
 
-With:
+The concurrent scenario runs:
 
 ```text
-BATCH_SIZE = 1500
-INGESTION_RATE = 12 requests/sec
+455 POST requests/sec
+2 GET /logs requests/sec
+1 aggregation request/sec
 ```
 
-the target ingestion rate is:
+---
 
-```text
-1500 × 12 = 18,000 logs/sec
-```
+# Cleaning Local Benchmark Data
 
-Before repeated local benchmark runs, test data can be cleared with:
+Repeated performance tests can generate millions of rows.
+
+Local benchmark data can be cleared with:
 
 ```bash
 docker compose exec db \
@@ -1024,40 +1162,34 @@ docker compose exec db \
 
 ---
 
-# Official Load Generator
-
-The repository has been submitted to the official project load generator.
-
-```text
-Status: Pending
-```
-
-The official result will be added when the submitted benchmark completes.
-
----
-
-# Performance Trade-offs
+# Design Trade-offs
 
 ## JSONB Attributes
 
-Advantage:
+Advantages:
 
 ```text
-flexibility without requiring a separate schema for every attribute
+flexible metadata
+one row per log
+simple write path
+native PostgreSQL support
 ```
 
 Trade-off:
 
 ```text
-arbitrary dynamic-attribute queries may require raw-log scanning
+arbitrary attribute filtering is more expensive
+than filtering dedicated relational columns
 ```
 
-## Daily Partitions
+## Daily Partitioning
 
-Advantage:
+Advantages:
 
 ```text
-efficient time pruning and retention
+efficient retention
+partition pruning
+reduced deletion overhead
 ```
 
 Trade-off:
@@ -1066,32 +1198,52 @@ Trade-off:
 partition lifecycle management adds database complexity
 ```
 
-## Aggregation Rollups
+## Rollups
 
-Advantage:
+Advantages:
 
 ```text
-dramatically reduces aggregation work for supported dimensions
+very fast aggregation
+less raw-log scanning
+more stable aggregation during ingestion
 ```
 
 Trade-off:
 
 ```text
-adds derived database state and additional work to ingestion
+additional derived database state
+additional ingestion writes
 ```
 
-## Large Batches
+## Cross-Request Batching
 
-Advantage:
+Advantages:
 
 ```text
-fewer HTTP, database, and transaction overheads per log
+far fewer PostgreSQL writes
+handles high HTTP request rates efficiently
+preserves durable acknowledgement semantics
 ```
 
 Trade-off:
 
 ```text
-larger individual requests and higher latency near saturation
+adds short queueing latency
+requires bounded in-memory coordination
+adds batching complexity
+```
+
+## Multiple Database Batch Writers
+
+The final configuration allows two combined ingestion batches to execute concurrently.
+
+This provides a balance between:
+
+```text
+database throughput
+request latency
+query availability
+PostgreSQL contention
 ```
 
 ---
@@ -1105,18 +1257,18 @@ q
 attr.<key>
 ```
 
-use the raw-log path rather than the minute rollup optimization.
+use the raw-log aggregation path rather than the rollup optimization.
 
-Their performance therefore depends more directly on dataset size.
+Their performance therefore depends more directly on raw dataset size.
 
 The current architecture uses:
 
 ```text
-single application instance
-single PostgreSQL instance
+one application instance
+one PostgreSQL instance
 ```
 
-Horizontal application scaling, distributed storage, queues, replication, and external caches are intentionally outside the required core project scope.
+Horizontal application scaling, distributed databases, message queues, replication, and external caches are intentionally outside the required core project scope.
 
 ---
 
@@ -1154,7 +1306,7 @@ Install dependencies:
 npm ci
 ```
 
-Start only PostgreSQL for local development:
+Start PostgreSQL:
 
 ```bash
 docker compose up -d db
@@ -1166,13 +1318,13 @@ Start the application in development mode:
 npm run dev
 ```
 
-Run migrations manually if required during local development:
+Run database migrations manually during development if required:
 
 ```bash
 npm run migrate
 ```
 
-The development PostgreSQL container is exposed locally on:
+The development PostgreSQL container is exposed at:
 
 ```text
 localhost:5433
@@ -1182,23 +1334,29 @@ localhost:5433
 
 # Optional Features
 
-No optional features are enabled.
+No optional features are currently enabled.
 
-The project intentionally focuses on the required core API and performance targets.
+The project intentionally focuses on the required core API, reliability, retention, and performance requirements.
 
 ---
 
-# Final Status
+# Current Project Status
 
 ```text
-Core implementation       Complete
-Automated tests           Complete
-Local performance testing Complete
-Docker setup              Complete
-Documentation             Complete
-Official benchmark        Pending
-Demo/video                Pending
-Final submission          Pending
+Core API                   Complete
+Database                   Complete
+Validation                 Complete
+Querying                    Complete
+Aggregation                 Complete
+Retention                   Complete
+Cross-request batching      Complete
+Automated tests             Complete
+CI                          Passing
+Docker setup                Complete
+Local performance testing   Complete
+Official benchmark          Pending
+Final video                 Pending
+Final submission            Pending
 ```
 
 ---
