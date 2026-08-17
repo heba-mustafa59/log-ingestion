@@ -1,8 +1,8 @@
 import type { LogEntry } from './schema.js';
 import { insertLogs } from './repository.js';
 
-const TARGET_DATABASE_BATCH_LOGS = 5000;
-const MAX_BATCH_DELAY_MS = 250;
+const TARGET_DATABASE_BATCH_LOGS = 1000;
+const MAX_BATCH_DELAY_MS =50;
 
 const MAX_CONCURRENT_DATABASE_BATCHES = 1;
 
