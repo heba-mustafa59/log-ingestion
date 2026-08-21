@@ -60,6 +60,17 @@ const INSERT_LOGS_QUERY = `
       2,
       3
 
+    ON CONFLICT (
+      bucket_start,
+      service,
+      level
+    )
+    DO UPDATE
+    SET
+      count =
+        log_rollups_minute.count
+        + EXCLUDED.count
+
     RETURNING 1
   )
 
